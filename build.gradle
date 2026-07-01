@@ -135,6 +135,10 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 processResources {
+	//track these so changing the version re-expands rusherhack-plugin.json
+	//(expand() properties aren't tracked as inputs, so the task would otherwise stay cached)
+	inputs.property("minecraft_version", project.minecraft_version)
+	inputs.property("plugin_version", project.plugin_version)
 	filesMatching("rusherhack-plugin.json") {
 		expand(project: project)
 	}
