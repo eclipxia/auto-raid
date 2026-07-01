@@ -1,11 +1,11 @@
 {
-  "Plugin-Class": "org.example.ExamplePlugin",
+  "Plugin-Class": "org.autoraid.AutoRaidPlugin",
   "Name": "${project.plugin_name}",
   "Version": "${project.plugin_version}",
-  "Description": "Example rusherhack plugin",
-  "URL": "https://github.com/RusherDevelopment/example-plugin",
+  "Description": "Automatically drinks an Ominous Bottle when the raid victory boss bar appears",
+  "URL": "https://github.com/eclipxia/auto-raid",
   "Authors": [
-    "John200410"
+    "eclipxia"
   ],
   "Minecraft-Versions": [
     "${project.minecraft_version}"
