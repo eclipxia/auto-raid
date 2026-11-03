@@ -7,7 +7,7 @@ plugins {
 
 version = project.plugin_version
 group = project.maven_group
-archivesBaseName = project.plugin_name
+archivesBaseName = "${project.plugin_name}-${project.minecraft_version}"
 
 configurations {
 	rusherhackApi
@@ -106,7 +106,7 @@ tasks.register("copyPluginToRunDir", Copy) {
 }
 
 loom {
-	def accessWidenerFile = new File("build/tmp/${this.project.minecraft_version}/rusherhack.accesswidener")
+	def accessWidenerFile = file("build/tmp/${this.project.minecraft_version}/rusherhack.accesswidener")
 	if(accessWidenerFile.exists()) {
 		accessWidenerPath = accessWidenerFile
 	} else {
@@ -135,6 +135,10 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 processResources {
+	//track these so changing the version re-expands rusherhack-plugin.json
+	//(expand() properties aren't tracked as inputs, so the task would otherwise stay cached)
+	inputs.property("minecraft_version", project.minecraft_version)
+	inputs.property("plugin_version", project.plugin_version)
 	filesMatching("rusherhack-plugin.json") {
 		expand(project: project)
 	}
