@@ -1,13 +1,13 @@
 plugins {
 	id 'idea'
 	id 'java'
-	id 'fabric-loom' version '1.9-SNAPSHOT'
+	id 'fabric-loom' version '1.19.3'
 	id 'maven-publish'
 }
 
 version = project.plugin_version
 group = project.maven_group
-archivesBaseName = project.plugin_name
+base.archivesName = "${project.plugin_name}-${project.minecraft_version}"
 
 configurations {
 	rusherhackApi
@@ -54,6 +54,12 @@ dependencies {
 	rusherhackApi "org.rusherhack:rusherhack-api:$minecraft_version-SNAPSHOT"
 }
 
+//code shared by every version lives in ../common and is compiled against this version
+sourceSets.main {
+	java.srcDir("../common/src/main/java")
+	resources.srcDir("../common/src/main/resources")
+}
+
 tasks.register('updateAccessWidener', Copy) {
 	group = "build"
 	outputs.upToDateWhen { false }
@@ -85,6 +91,11 @@ tasks.register('runPlugin', JavaExec) {
 				"--gameDir", workingDir.absolutePath
 		)
 
+		//./gradlew :<version>:runPlugin -PquickPlay="Void Raid" joins that singleplayer world directly
+		if (project.hasProperty("quickPlay")) {
+			args("--quickPlaySingleplayer", project.property("quickPlay"))
+		}
+
 		def rusherLoaderJarFile = project.layout.getProjectDirectory().file("lib/rusherhack-loader.jar").asFile
 		if (!rusherLoaderJarFile.exists()) {
 			throw new GradleException("rusherhack-loader.jar must be copied to the lib directory!")
@@ -106,7 +117,7 @@ tasks.register("copyPluginToRunDir", Copy) {
 }
 
 loom {
-	def accessWidenerFile = new File("build/tmp/${this.project.minecraft_version}/rusherhack.accesswidener")
+	def accessWidenerFile = file("build/tmp/${this.project.minecraft_version}/rusherhack.accesswidener")
 	if(accessWidenerFile.exists()) {
 		accessWidenerPath = accessWidenerFile
 	} else {
