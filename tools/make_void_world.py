@@ -111,8 +111,14 @@ def level_dat(version, name, spawn_y):
     dv = DATA_VERSION[version]
     bottle = {"id": "minecraft:ominous_bottle", "count": Int(64),
               "components": {"minecraft:ominous_bottle_amplifier": Int(4)}}
-    inv = []
-    for slot in range(9):
+    # item component format for enchantments changed in 1.21.5 (the "levels" wrapper was removed)
+    ench = ({"minecraft:sharpness": Int(255)} if version == "1.21.11"
+            else {"levels": {"minecraft:sharpness": Int(255)}})
+    # the enchantment level codec caps at 255 (32767 is rejected), so that is the maximum
+    sword = {"id": "minecraft:netherite_sword", "count": Int(1),
+             "components": {"minecraft:enchantments": ench, "minecraft:unbreakable": {}}}
+    inv = [{"Slot": Byte(0), **sword}]
+    for slot in range(1, 10):
         inv.append({"Slot": Byte(slot), **bottle})
     void = {"type": "minecraft:flat", "settings": {
         "biome": "minecraft:the_void", "features": Byte(0), "lakes": Byte(0),
