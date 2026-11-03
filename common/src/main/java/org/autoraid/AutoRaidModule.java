@@ -8,6 +8,8 @@ import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.world.BossEvent;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.rusherhack.client.api.events.client.EventUpdate;
 import org.rusherhack.client.api.events.network.EventPacket;
@@ -45,6 +47,9 @@ public class AutoRaidModule extends ToggleableModule {
 	private final NumberSetting<Integer> delay =
 			new NumberSetting<>("Delay", 10, 0, 100).incremental(1);
 
+	private final BooleanSetting skipIfOmen =
+			new BooleanSetting("SkipIfOmen", "Don't drink if Bad Omen or Raid Omen is already active", true);
+
 	private final BooleanSetting autoDisconnect =
 			new BooleanSetting("AutoDisconnect", "Disconnect when no Ominous Bottles are left", false);
 
@@ -67,6 +72,8 @@ public class AutoRaidModule extends ToggleableModule {
 	private int previousSlot = 0; //slot to restore after drinking
 	private int drinkTimer = 0;   //ticks left to hold "use" (bounds the drink to one bottle)
 	private int guardTicks = 0;   //ticks spent cancelling any extra auto-use
+	private int startCount = 0;   //held bottle count when the drink began (to detect consumption)
+	private int cooldown = 0;     //ticks to ignore new victories after a drink (anti double-trigger)
 
 	public AutoRaidModule() {
 		super("AutoRaid", "Automatically drinks an Ominous Bottle on raid victory", ModuleCategory.PLAYER);
@@ -74,6 +81,7 @@ public class AutoRaidModule extends ToggleableModule {
 		this.registerSettings(
 				this.hotbarSlot,
 				this.delay,
+				this.skipIfOmen,
 				this.autoDisconnect,
 				this.textDetection,
 				this.notifications
@@ -138,15 +146,24 @@ public class AutoRaidModule extends ToggleableModule {
 			return;
 		}
 
+		if (this.cooldown > 0) {
+			this.cooldown--;
+		}
+
 		//start a new sequence when victory was flagged and we're not already busy
 		if (this.victoryFlag) {
 			this.victoryFlag = false;
-			if (this.stage == 0) {
-				this.stage = 1;
-				this.stageTicks = 0;
-				this.delayCounter = this.delay.getValue();
-				this.previousSlot = mc.player.getInventory().selected;
-				notify("Raid victory detected");
+			if (this.stage == 0 && this.cooldown == 0) {
+				//don't waste bottles if an omen is already active
+				if (this.skipIfOmen.getValue() && hasOmen()) {
+					notify("Omen already active - skipping drink");
+				} else {
+					this.stage = 1;
+					this.stageTicks = 0;
+					this.delayCounter = this.delay.getValue();
+					this.previousSlot = VersionCompat.getSelectedSlot(mc.player);
+					notify("Raid victory detected");
+				}
 			}
 		}
 
@@ -183,10 +200,11 @@ public class AutoRaidModule extends ToggleableModule {
 	/**
 	 * Stage 3: begin using the bottle.
 	 * <p>
-	 * In 1.21.4 the Ominous Bottle is a consumable with a drink animation, so a single
-	 * {@code useItem} only starts the use - it must be held to completion (see stage 4).
+	 * The Ominous Bottle is a consumable with a drink animation, so a single {@code useItem}
+	 * only starts the use - it must be held to completion (see stage 4).
 	 */
 	private void startDrinking() {
+		this.startCount = heldBottleCount();
 		mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
 		notify("Drinking Ominous Bottle");
 
@@ -202,21 +220,28 @@ public class AutoRaidModule extends ToggleableModule {
 	}
 
 	/**
-	 * Stage 4: keep the use key held until the drink finishes, but no longer than one
-	 * bottle's duration - this prevents vanilla from auto-starting a second drink.
+	 * Stage 4: hold the use key until the drink finishes, then stop immediately. The primary
+	 * stop signal is the held bottle count dropping - the instant one bottle is consumed we
+	 * release and cancel any use, so vanilla can never auto-start a second drink.
 	 */
 	private void continueDrinking() {
+		//one bottle consumed -> we're done, cancel anything still in progress
+		if (heldBottleCount() < this.startCount) {
+			stopHolding();
+			this.guardTicks = 0;
+			this.stage = 5;
+			return;
+		}
+
+		//still drinking the first bottle (bounded by drinkTimer as a failsafe)
 		if (mc.player.isUsingItem() && this.drinkTimer > 0) {
 			this.drinkTimer--;
 			mc.options.keyUse.setDown(true);
 			return;
 		}
 
-		//done (or timed out): stop holding and cancel any lingering/extra use
-		mc.options.keyUse.setDown(false);
-		if (mc.player.isUsingItem()) {
-			mc.gameMode.releaseUsingItem(mc.player);
-		}
+		//timed out or use ended without a consumption
+		stopHolding();
 		this.guardTicks = 0;
 		this.stage = 5;
 	}
@@ -226,10 +251,7 @@ public class AutoRaidModule extends ToggleableModule {
 	 * state settles) before it can consume another bottle. Releasing early consumes nothing.
 	 */
 	private void guardAgainstExtraDrink() {
-		mc.options.keyUse.setDown(false);
-		if (mc.player.isUsingItem()) {
-			mc.gameMode.releaseUsingItem(mc.player);
-		}
+		stopHolding();
 		if (++this.guardTicks >= 3) {
 			this.stage = 6;
 		}
@@ -240,11 +262,31 @@ public class AutoRaidModule extends ToggleableModule {
 	 */
 	private void finish() {
 		selectSlot(this.previousSlot);
+		//briefly ignore further victory packets so one raid win never drinks twice
+		this.cooldown = 30;
 		final boolean anyLeft = InventoryUtils.findItem(Items.OMINOUS_BOTTLE, false, true) >= 0;
 		if (!anyLeft && this.autoDisconnect.getValue()) {
 			disconnect();
 		}
 		resetSequence();
+	}
+
+	/**
+	 * Stop holding the use key and cancel any in-progress use (early release consumes nothing).
+	 */
+	private void stopHolding() {
+		mc.options.keyUse.setDown(false);
+		if (mc.player.isUsingItem()) {
+			mc.gameMode.releaseUsingItem(mc.player);
+		}
+	}
+
+	/**
+	 * Count of Ominous Bottles currently held in the main hand (0 if not holding one).
+	 */
+	private int heldBottleCount() {
+		final ItemStack held = mc.player.getMainHandItem();
+		return held.is(Items.OMINOUS_BOTTLE) ? held.getCount() : 0;
 	}
 
 	/**
@@ -280,7 +322,7 @@ public class AutoRaidModule extends ToggleableModule {
 		if (slot < 0 || slot > 8) {
 			return;
 		}
-		mc.player.getInventory().selected = slot;
+		VersionCompat.setSelectedSlot(mc.player, slot);
 		if (mc.getConnection() != null) {
 			mc.getConnection().send(new ServerboundSetCarriedItemPacket(slot));
 		}
@@ -317,6 +359,13 @@ public class AutoRaidModule extends ToggleableModule {
 		if (this.notifications.getValue()) {
 			ChatUtils.print("[AutoRaid] " + message);
 		}
+	}
+
+	/**
+	 * Whether the player already has an omen that makes drinking another bottle pointless.
+	 */
+	private boolean hasOmen() {
+		return mc.player.hasEffect(MobEffects.BAD_OMEN) || mc.player.hasEffect(MobEffects.RAID_OMEN);
 	}
 
 	/**

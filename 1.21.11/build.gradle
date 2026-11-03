@@ -54,6 +54,12 @@ dependencies {
 	rusherhackApi "org.rusherhack:rusherhack-api:$minecraft_version-SNAPSHOT"
 }
 
+//code shared by every version lives in ../common and is compiled against this version
+sourceSets.main {
+	java.srcDir("../common/src/main/java")
+	resources.srcDir("../common/src/main/resources")
+}
+
 tasks.register('updateAccessWidener', Copy) {
 	group = "build"
 	outputs.upToDateWhen { false }
