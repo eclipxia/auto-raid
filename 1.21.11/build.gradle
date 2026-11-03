@@ -91,6 +91,11 @@ tasks.register('runPlugin', JavaExec) {
 				"--gameDir", workingDir.absolutePath
 		)
 
+		//./gradlew :<version>:runPlugin -PquickPlay="Void Raid" joins that singleplayer world directly
+		if (project.hasProperty("quickPlay")) {
+			args("--quickPlaySingleplayer", project.property("quickPlay"))
+		}
+
 		def rusherLoaderJarFile = project.layout.getProjectDirectory().file("lib/rusherhack-loader.jar").asFile
 		if (!rusherLoaderJarFile.exists()) {
 			throw new GradleException("rusherhack-loader.jar must be copied to the lib directory!")
