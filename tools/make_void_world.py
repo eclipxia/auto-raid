@@ -3,13 +3,13 @@
 Build a void test world containing a litematic (e.g. a raid farm) and a creative
 player holding a lot of Ominous Bottles. Stdlib only.
 
-usage: make_void_world.py <schematic.litematic> <saves dir> <1.21.4|1.21.11> [world name]
+usage: make_void_world.py <schematic.litematic> <saves dir> <1.21.4|1.21.11|26.2> [world name]
 """
 import io, os, struct, sys, time, zlib, math, shutil
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tnbt import *
 
-DATA_VERSION = {"1.21.4": 4189, "1.21.11": 4671}
+DATA_VERSION = {"1.21.4": 4189, "1.21.11": 4671, "26.2": 4903}
 ORIGIN_Y = 64          # schematic min corner is placed at y=64, x/z centred on 0,0
 
 
@@ -112,7 +112,7 @@ def level_dat(version, name, spawn_y):
     bottle = {"id": "minecraft:ominous_bottle", "count": Int(64),
               "components": {"minecraft:ominous_bottle_amplifier": Int(4)}}
     # item component format for enchantments changed in 1.21.5 (the "levels" wrapper was removed)
-    ench = ({"minecraft:sharpness": Int(255)} if version == "1.21.11"
+    ench = ({"minecraft:sharpness": Int(255)} if version != "1.21.4"
             else {"levels": {"minecraft:sharpness": Int(255)}})
     # the enchantment level codec caps at 255 (32767 is rejected), so that is the maximum
     sword = {"id": "minecraft:netherite_sword", "count": Int(1),
@@ -148,7 +148,7 @@ def level_dat(version, name, spawn_y):
             "WorldGenSettings": {"seed": Long(0), "generate_features": Byte(0), "bonus_chest": Byte(0),
                                  "dimensions": {"minecraft:overworld": {"type": "minecraft:overworld", "generator": void}}},
             "Player": player}
-    if version == "1.21.11":     # spawn became a compound in 1.21.9
+    if version != "1.21.4":     # spawn became a compound in 1.21.9
         data["spawn"] = {"pos": IArr([0, int(spawn_y), 0]), "pitch": Float(0), "yaw": Float(0),
                          "dimension": "minecraft:overworld"}
     else:
@@ -166,8 +166,14 @@ def main():
     size, blocks, tiles = load_schematic(schem)
     top = write_regions(world, DATA_VERSION[version], size, blocks, tiles)
 
+    level = level_dat(version, name, top + 2)
+    if version == "26.2":        # world gen settings moved out of level.dat into a data file in 26.x
+        gen = level["Data"].pop("WorldGenSettings")
+        os.makedirs(os.path.join(world, "data", "minecraft"))
+        with gzip.open(os.path.join(world, "data", "minecraft", "world_gen_settings.dat"), "wb") as f:
+            f.write(write({"DataVersion": Int(DATA_VERSION[version]), "data": gen}))
     with gzip.open(os.path.join(world, "level.dat"), "wb") as f:
-        f.write(write(level_dat(version, name, top + 2)))
+        f.write(write(level))
     print(f"{version}: wrote {world} ({len(blocks)} blocks, {len(tiles)} block entities)")
 
 

@@ -118,3 +118,11 @@ run/
 !gradle-wrapper.jar
 
 lib/
+
+# IDE / Eclipse (Buildship) and Python artefacts
+.project
+.classpath
+.factorypath
+.settings/
+bin/
+__pycache__/

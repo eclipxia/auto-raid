@@ -13,3 +13,4 @@ rootProject.name = 'auto-raid'
 // one subproject per supported Minecraft version
 include '1.21.4'
 include '1.21.11'
+include '26.2'
