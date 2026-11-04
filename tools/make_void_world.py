@@ -3,13 +3,13 @@
 Build a void test world containing a litematic (e.g. a raid farm) and a creative
 player holding a lot of Ominous Bottles. Stdlib only.
 
-usage: make_void_world.py <schematic.litematic> <saves dir> <1.21.4|1.21.11> [world name]
+usage: make_void_world.py <schematic.litematic> <saves dir> <1.21.4|1.21.11|26.2> [world name]
 """
-import io, os, struct, sys, time, zlib, math, shutil
+import io, os, uuid, struct, sys, time, zlib, math, shutil
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tnbt import *
 
-DATA_VERSION = {"1.21.4": 4189, "1.21.11": 4671}
+DATA_VERSION = {"1.21.4": 4189, "1.21.11": 4671, "26.2": 4903}
 ORIGIN_Y = 64          # schematic min corner is placed at y=64, x/z centred on 0,0
 
 
@@ -61,7 +61,7 @@ def pack_section(states):
     return out
 
 
-def write_regions(saves_world, dv, size, blocks, tiles):
+def write_regions(region_dir, dv, size, blocks, tiles):
     sx, sy, sz = size
     ox, oy, oz = -(sx // 2), ORIGIN_Y, -(sz // 2)
     AIR = {"Name": "minecraft:air"}
@@ -89,7 +89,7 @@ def write_regions(saves_world, dv, size, blocks, tiles):
         raw = write(chunk)
         regions.setdefault((cx >> 5, cz >> 5), {})[(cx & 31, cz & 31)] = zlib.compress(raw)
 
-    os.makedirs(os.path.join(saves_world, "region"), exist_ok=True)
+    os.makedirs(region_dir, exist_ok=True)
     for (rx, rz), cs in regions.items():
         header, body, sector = bytearray(4096), bytearray(), 2
         stamps = bytearray(4096)
@@ -102,7 +102,7 @@ def write_regions(saves_world, dv, size, blocks, tiles):
             stamps[o:o + 4] = struct.pack(">I", int(time.time()))
             body += rec
             sector += n
-        with open(os.path.join(saves_world, "region", f"r.{rx}.{rz}.mca"), "wb") as f:
+        with open(os.path.join(region_dir, f"r.{rx}.{rz}.mca"), "wb") as f:
             f.write(bytes(header) + bytes(stamps) + bytes(body))
     return oy + sy
 
@@ -112,7 +112,7 @@ def level_dat(version, name, spawn_y):
     bottle = {"id": "minecraft:ominous_bottle", "count": Int(64),
               "components": {"minecraft:ominous_bottle_amplifier": Int(4)}}
     # item component format for enchantments changed in 1.21.5 (the "levels" wrapper was removed)
-    ench = ({"minecraft:sharpness": Int(255)} if version == "1.21.11"
+    ench = ({"minecraft:sharpness": Int(255)} if version != "1.21.4"
             else {"levels": {"minecraft:sharpness": Int(255)}})
     # the enchantment level codec caps at 255 (32767 is rejected), so that is the maximum
     sword = {"id": "minecraft:netherite_sword", "count": Int(1),
@@ -148,12 +148,44 @@ def level_dat(version, name, spawn_y):
             "WorldGenSettings": {"seed": Long(0), "generate_features": Byte(0), "bonus_chest": Byte(0),
                                  "dimensions": {"minecraft:overworld": {"type": "minecraft:overworld", "generator": void}}},
             "Player": player}
-    if version == "1.21.11":     # spawn became a compound in 1.21.9
+    if version != "1.21.4":     # spawn became a compound in 1.21.9
         data["spawn"] = {"pos": IArr([0, int(spawn_y), 0]), "pitch": Float(0), "yaw": Float(0),
                          "dimension": "minecraft:overworld"}
     else:
         data.update({"SpawnX": Int(0), "SpawnY": Int(int(spawn_y)), "SpawnZ": Int(0), "SpawnAngle": Float(0)})
     return {"Data": data}
+
+
+def write_26_layout(world, level):
+    """26.x moved world gen settings, weather, clocks and the player out of level.dat."""
+    data = level["Data"]
+    dv = data["DataVersion"]
+    def dat(path, payload):
+        full = os.path.join(world, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with gzip.open(full, "wb") as f:
+            f.write(write({"data": payload, "DataVersion": dv}))
+    gen = data.pop("WorldGenSettings")
+    gen["generate_structures"] = gen.pop("generate_features")
+    dat("data/minecraft/world_gen_settings.dat", gen)
+    dat("data/minecraft/weather.dat", {"rain_time": Int(100000), "raining": Byte(0), "thundering": Byte(0),
+                                       "thunder_time": Int(100000), "clear_weather_time": Int(0)})
+    dat("data/minecraft/world_clocks.dat", {"minecraft:overworld": {"total_ticks": Long(0)},
+                                           "minecraft:the_end": {"total_ticks": Long(0)}})
+    for k in ("raining", "thundering", "rainTime", "thunderTime", "clearWeatherTime", "Difficulty",
+              "hardcore", "DifficultyLocked", "DayTime", "WanderingTraderSpawnChance",
+              "WanderingTraderSpawnDelay", "CustomBossEvents", "ScheduledEvents", "DragonFight"):
+        data.pop(k, None)
+    data["difficulty_settings"] = {"difficulty": "normal", "hardcore": Byte(0), "locked": Byte(0)}
+    uid = uuid.UUID("00000000-0000-4000-8000-00000000a1d0")
+    ints = [(uid.int >> (96 - 32 * i)) & 0xFFFFFFFF for i in range(4)]
+    ints = [v - (1 << 32) if v >= 1 << 31 else v for v in ints]
+    data["singleplayer_uuid"] = IArr(ints)
+    player = data.pop("Player")
+    player["UUID"] = IArr(ints)
+    os.makedirs(os.path.join(world, "players", "data"), exist_ok=True)
+    with gzip.open(os.path.join(world, "players", "data", f"{uid}.dat"), "wb") as f:
+        f.write(write(player))
 
 
 def main():
@@ -164,10 +196,17 @@ def main():
         shutil.rmtree(world)
     os.makedirs(world)
     size, blocks, tiles = load_schematic(schem)
-    top = write_regions(world, DATA_VERSION[version], size, blocks, tiles)
-
+    new_layout = version == "26.2"   # 26.x: dimensions/, players/ and data/ folders
+    region_dir = (os.path.join(world, "dimensions", "minecraft", "overworld", "region")
+                  if new_layout else os.path.join(world, "region"))
+    if new_layout:               # beds are no longer block entities in 26.x
+        tiles = [t for t in tiles if t["id"] != "minecraft:bed"]
+    top = write_regions(region_dir, DATA_VERSION[version], size, blocks, tiles)
+    level = level_dat(version, name, top + 2)
+    if new_layout:
+        write_26_layout(world, level)
     with gzip.open(os.path.join(world, "level.dat"), "wb") as f:
-        f.write(write(level_dat(version, name, top + 2)))
+        f.write(write(level))
     print(f"{version}: wrote {world} ({len(blocks)} blocks, {len(tiles)} block entities)")
 
 
