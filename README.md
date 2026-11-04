@@ -1,59 +1,95 @@
-# RusherHack Example Plugin
+# AutoRaid
 
-An example implementation of a RusherHack plugin. 
+A [RusherHack](https://rusherhack.org) plugin that automatically drinks an Ominous Bottle when the raid victory boss bar appears, so you can chain raids on a raid farm without touching the keyboard.
 
-RusherHack plugins are custom add-ons written by developers to add new features to RusherHack.
+## Features
 
-## Setting up the Development Environment
+When a raid is won, the `AutoRaid` module (category: Player):
 
-### Installing Java Development Kit (JDK)
+1. Detects the victory boss bar.
+2. Moves an Ominous Bottle onto your hotbar if there isn't one already.
+3. Drinks exactly one bottle (it releases the use key the moment one is consumed, so vanilla never starts a second drink).
+4. Restores the slot you were holding before.
 
-For Minecraft versions 1.20.1-1.20.4, you will need to have JDK 17 installed. You can download it [here](https://www.azul.com/downloads/?version=java-17-lts&package=jdk#zulu).
+### Settings
 
-For Minecraft versions 1.20.5 and newer, you will need to have JDK 21 installed. You can download it [here](https://www.azul.com/downloads/?version=java-21-lts&package=jdk#zulu).
+| Setting          | Default | Description                                                                        |
+|------------------|---------|------------------------------------------------------------------------------------|
+| `HotbarSlot`     | 9       | Hotbar slot (1-9) a bottle is moved into when none is on the hotbar.               |
+| `Delay`          | 10      | Ticks to wait after victory before drinking (20 ticks = 1 second).                 |
+| `SkipIfOmen`     | on      | Don't drink if Bad Omen or Raid Omen is already active.                            |
+| `AutoDisconnect` | off     | Disconnect when no Ominous Bottles are left.                                       |
+| `TextDetection`  | on      | Also detect victory from the boss bar text, for servers that strip translation keys. |
+| `Notifications`  | on      | Print chat messages when the module acts.                                          |
 
-### Installing IntelliJ IDEA
+## Supported versions
 
-IntelliJ IDEA is the preferred Java IDE for rusherhack plugin development.
+| Minecraft | Module    | Mappings              |
+|-----------|-----------|-----------------------|
+| 1.21.4    | `1.21.4/` | Mojmap + Parchment    |
+| 1.21.11   | `1.21.11/`| Mojmap + Parchment    |
+| 26.2      | `26.2/`   | none (unobfuscated)   |
 
-IntelliJ IDEA can be downloaded from [the official website](https://www.jetbrains.com/idea/download).
+Each version is built as its own jar: `auto-raid-<minecraft version>-<plugin version>.jar`.
 
-The Community edition is recommended because it is free and open-source.
+## Installing
 
-## Clone the repository
+1. Build the jar for your Minecraft version (see below).
+2. Drop it into your RusherHack plugins folder (`.minecraft/rusherhack/plugins`).
+3. Start the game and enable `AutoRaid` in the RusherHack GUI.
 
-In IntelliJ, when creating a new project there is an option to clone a repository:
+## Project layout
 
-<img src="https://rusherhack.org/i/zsa4nyb3v3m5ifk8gkyoywak.png" alt="cloning" width="600"/>
+This is a multi-project Gradle build.
 
-In the URL, write the text `https://github.com/RusherDevelopment/example-plugin.git` and press `Clone` 
+```
+common/        shared plugin code and resources, compiled into every version
+  src/main/java/org/autoraid/   AutoRaidPlugin, AutoRaidModule
+  src/main/resources/           rusherhack-plugin.json
+<version>/     one folder per Minecraft version
+  build.gradle, gradle.properties
+  src/main/java/org/autoraid/VersionCompat.java   per-version API differences
+tools/         make_void_world.py, test world generator
+```
 
-<img src="https://rusherhack.org/i/2rdwc40q98ihb93lt1yykyw8.png" alt="cloning2" width="600"/>
+Almost everything lives in `common/`. A version module only contains its build setup and `VersionCompat`, a tiny class that hides API differences between Minecraft versions (for example how the selected hotbar slot is read and written).
 
-IntelliJ may prompt you asking if you trust the project. Click `Trust Project` to continue.
+To support a new Minecraft version: copy the closest existing module folder, update its `gradle.properties` (Minecraft version, loader version, mappings), add `include '<version>'` to `settings.gradle`, and fix anything that no longer compiles in `VersionCompat`. The RusherHack API `<version>-SNAPSHOT` must exist on the [RusherHack Maven](https://maven.rusherhack.org/snapshots).
 
-You should now have a window that looks like this: 
+## Building
 
-<img src="https://rusherhack.org/i/vwvie6ljusi2tfunyrmvty7j.png" alt="project" width="800"/>
+Requires **JDK 25**. The Gradle wrapper (9.8.2) is included.
 
-## Modifying the template
+```sh
+./gradlew build                  # every version
+./gradlew :1.21.11:build         # one version
+```
 
-- Open the `gradle.properties` file and modify it to your preferences.
-- Open the `src/main/resources/rusherhack-plugin.json` file and modify it to your preferences.
-  - The `Plugin-Class` property must match the main class of your plugin.
-  - The `Name`, `Version`, and `Minecraft-Versions` properties get automatically filled by the values in the `gradle.properties` file. You can add more Minecraft versions if you wish but compatibility between multiple versions is not guaranteed.
+Jars end up in `<version>/build/libs/`.
 
-## Building the plugin
+The first time (and after changing the Minecraft version) run `./gradlew :<version>:updateAccessWidener` so the RusherHack access widener is fetched.
 
-To build the plugin .jar file, you can run the `gradle build` task.
+## Running in a dev client
 
-1. Click on the elephant icon on the right of the screen (Gradle)
-2. Navigate to `Tasks` -> `build` -> `build` and double-click it: 
+1. Copy `rusherhack-loader.jar` into `<version>/lib/`. It is gitignored.
+2. Run:
 
-<img src="https://rusherhack.org/i/jkdw12a3wtsz9vvwpvujo9px.png" alt="gradle" width="400"/>
+```sh
+./gradlew :1.21.11:runPlugin
+./gradlew :1.21.11:runPlugin -PquickPlay="Void Raid"   # join a singleplayer world directly
+```
 
-3. The compiled plugin .jar file will be located in the `build/libs` directory: 
+### Void test world
 
-<img src="https://rusherhack.org/i/lfwho6o6vrqc4c3znl3pm60v.png" alt="build" width="400"/>
+`tools/make_void_world.py` builds a void world containing a raid farm schematic, with a creative player holding a lot of Ominous Bottles and a netherite sword. It uses only the Python standard library:
 
-To install the plugin into RusherHack, you can follow the instructions on the [RusherHack plugins repository](https://github.com/RusherDevelopment/rusherhack-plugins?tab=readme-ov-file#installation)
+```sh
+python3 tools/make_void_world.py <farm.litematic> <version>/run/saves <version>
+# e.g. python3 tools/make_void_world.py farm.litematic 26.2/run/saves 26.2
+```
+
+Supported versions are `1.21.4`, `1.21.11` and `26.2`. The world is named `Void Raid`. Block entities (chests, hoppers, signs) are kept; entities are dropped. A schematic is not included in this repository.
+
+## License
+
+See [LICENSE](LICENSE).
